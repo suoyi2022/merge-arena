@@ -50,7 +50,13 @@ export async function reviewTask(
   const ranked: RankedAgent[] = [];
   for (let i = 0; i < task.agents.length; i++) {
     const a = task.agents[i];
-    if (a.status !== "pushed" && a.status !== "scored") continue;
+    if (a.status !== "pushed" && a.status !== "scored" && a.status !== "working") continue;
+    // working 状态的 agent：检查 fork 是否真有提交，有才评分（兼容事件通道未接通时的手动评审）
+    if (a.status === "working") {
+      const changes = await store.diff(task.repo, a.name);
+      if (changes.length === 0) continue;
+      a.status = "pushed";
+    }
     const score = await scoreAgent(store, task.repo, a.name);
     a.score = score;
     a.status = "scored";

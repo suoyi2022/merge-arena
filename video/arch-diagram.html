@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; background: #0a0a0f; color: #fff; font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .diagram { display: flex; align-items: center; gap: 20px; }
+  .box { background: #1a1a2e; border: 2px solid #f97316; border-radius: 12px; padding: 24px 32px; text-align: center; min-width: 140px; }
+  .box h3 { margin: 0 0 8px 0; color: #f97316; font-size: 18px; }
+  .box p { margin: 0; font-size: 13px; color: #aaa; }
+  .arrow { font-size: 32px; color: #f97316; }
+  .label { position: absolute; background: #f97316; color: #000; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="diagram">
+  <div class="box"><h3>Task</h3><p>dark mode</p></div>
+  <div class="arrow">→</div>
+  <div class="box"><h3>Fork ×3</h3><p>Artifacts</p></div>
+  <div class="arrow">→</div>
+  <div class="box"><h3>Agents</h3><p>scoped tokens</p></div>
+  <div class="arrow">→</div>
+  <div class="box"><h3>Push</h3><p>git</p></div>
+  <div class="arrow">→</div>
+  <div class="box"><h3>Review</h3><p>auto score</p></div>
+  <div class="arrow">→</div>
+  <div class="box"><h3>Merge</h3><p>champion</p></div>
+</div>
+</body>
+</html>

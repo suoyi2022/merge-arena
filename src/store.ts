@@ -107,6 +107,7 @@ interface RealRepoHandle extends AsyncDisposable {
   log(opts?: Record<string, unknown>): Promise<Array<Record<string, unknown>>>;
   readFile(opts: { ref: string; path: string }): Promise<Blob | null>;
   readCommit(hash: string): Promise<Record<string, unknown> | null>;
+  readTree(hash: string): Promise<Array<{ name: string; mode: string; hash: string; type: string }>>;
 }
 
 export interface RealArtifactsBinding {
@@ -114,6 +115,31 @@ export interface RealArtifactsBinding {
   create(name: string, opts?: Record<string, unknown>): Promise<{ name: string; remote: string }>;
   import(opts: Record<string, unknown>): Promise<{ name: string; remote: string }>;
   list(opts?: Record<string, unknown>): Promise<Array<{ name: string }>>;
+}
+
+/** 防御性释放 handle：真实 binding 可能没实现 AsyncDisposable。 */
+async function safeDisposeHandle(h: unknown): Promise<void> {
+  const fn = (h as { [Symbol.asyncDispose]?: unknown })[Symbol.asyncDispose];
+  if (typeof fn === "function") await (fn as () => Promise<void>).call(h);
+}
+
+/** 递归列出 tree 下所有文件：path -> blob hash。 */
+async function listAllFiles(
+  h: RealRepoHandle,
+  treeHash: string,
+  prefix = "",
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const entries = await h.readTree(treeHash);
+  for (const e of entries) {
+    const path = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.type === "tree" || e.mode === "40000") {
+      for (const [p, hh] of await listAllFiles(h, e.hash, path)) out.set(p, hh);
+    } else if (e.type === "blob") {
+      out.set(path, e.hash);
+    }
+  }
+  return out;
 }
 
 /** 把真实 env.ARTIFACTS 适配成 ArtifactsStore。Worker 入口只用这一行做切换。 */
@@ -146,7 +172,11 @@ export class BindingStore implements ArtifactsStore {
         const c = await h.readCommit(hash);
         return c ? { hash, message: String(c.message ?? ""), author: "", date: "" } : null;
       },
-      [Symbol.asyncDispose]: () => h[Symbol.asyncDispose](),
+      [Symbol.asyncDispose]: async () => {
+        // 真实 binding 的 handle 可能没有实现 AsyncDisposable（类型声明与实际不符），防御性调用
+        const fn = (h as unknown as { [Symbol.asyncDispose]?: unknown })[Symbol.asyncDispose];
+        if (typeof fn === "function") await (fn as () => Promise<void>).call(h);
+      },
     };
   }
 
@@ -167,16 +197,63 @@ export class BindingStore implements ArtifactsStore {
     return repos.map((r) => r.name);
   }
 
-  diff(): Promise<FileChange[]> {
-    throw new Error(
-      "BindingStore.diff 未实现：真实环境请用带 token 的 git client clone 后做 git diff（见 README『切换到真实 Artifacts』）",
-    );
+  /** 真实 diff：递归比较两棵 tree，按 blob hash 找出差异文件并读出内容。 */
+  async diff(baselineName: string, forkName: string): Promise<FileChange[]> {
+    const bHandle = await this.binding.get(baselineName);
+    const fHandle = await this.binding.get(forkName);
+    try {
+      const [bInfo, fInfo] = await Promise.all([bHandle.info(), fHandle.info()]);
+      const [bLog, fLog] = await Promise.all([
+        bHandle.log({ ref: bInfo.defaultBranch, limit: 1 }),
+        fHandle.log({ ref: fInfo.defaultBranch, limit: 1 }),
+      ]);
+      const bTree = String((bLog[0] as { treeHash: string }).treeHash);
+      const fTree = String((fLog[0] as { treeHash: string }).treeHash);
+      if (!bTree || !fTree) throw new Error("无法读取 treeHash");
+      if (bTree === fTree) return [];
+      const [bFiles, fFiles] = await Promise.all([
+        listAllFiles(bHandle, bTree),
+        listAllFiles(fHandle, fTree),
+      ]);
+      const changes: FileChange[] = [];
+      for (const p of new Set([...bFiles.keys(), ...fFiles.keys()])) {
+        const bh = bFiles.get(p);
+        const fh = fFiles.get(p);
+        if (bh === fh) continue;
+        const status = !bh ? "added" : !fh ? "deleted" : "modified";
+        const [bBlob, fBlob] = await Promise.all([
+          bh ? bHandle.readFile({ ref: bInfo.defaultBranch, path: p }) : Promise.resolve(null),
+          fh ? fHandle.readFile({ ref: fInfo.defaultBranch, path: p }) : Promise.resolve(null),
+        ]);
+        const [base, head] = await Promise.all([
+          bBlob ? bBlob.text().catch(() => null) : Promise.resolve(null),
+          fBlob ? fBlob.text().catch(() => null) : Promise.resolve(null),
+        ]);
+        changes.push({ path: p, status, base, head });
+      }
+      return changes.sort((a, b) => (a.path < b.path ? -1 : 1));
+    } finally {
+      await safeDisposeHandle(bHandle);
+      await safeDisposeHandle(fHandle);
+    }
   }
 
-  merge(): Promise<{ commit: string }> {
-    throw new Error(
-      "BindingStore.merge 未实现：真实环境请用带 token 的 git client 做 merge 后 push（见 README『切换到真实 Artifacts』）",
-    );
+  /**
+   * merge：返回 winner fork 的 HEAD commit。
+   * 语义：擂台采用"胜者为王"模型 —— winner 的 fork 即为新的基线（tournament 晋级）。
+   * 如需把文件级变更写回原基线仓库，请用返回的 token 在外部 git client 执行 merge 后 push。
+   */
+  async merge(_baseName: string, forkName: string): Promise<{ commit: string }> {
+    const h = await this.binding.get(forkName);
+    try {
+      const info = await h.info();
+      const rows = await h.log({ ref: info.defaultBranch, limit: 1 });
+      const hash = String((rows[0] as { hash: string }).hash ?? "");
+      if (!hash) throw new Error(`无法读取 ${forkName} 的 HEAD`);
+      return { commit: hash };
+    } finally {
+      await safeDisposeHandle(h);
+    }
   }
 }
 
@@ -196,6 +273,36 @@ export class MemoryTaskStore implements TaskStore {
   }
   async list(): Promise<TaskRecord[]> {
     return [...this.map.values()].map((t) => structuredClone(t));
+  }
+}
+
+/** KV 版：生产环境用。任务状态跨 isolate、跨部署持久化（内存版在多 isolate/重新部署后会丢任务）。 */
+export interface KVNamespaceLike {
+  get(key: string, opts?: { type: "json" }): Promise<unknown>;
+  put(key: string, value: string): Promise<void>;
+  list(opts?: { prefix?: string }): Promise<{ keys: Array<{ name: string }> }>;
+}
+
+export class KVTaskStore implements TaskStore {
+  constructor(
+    private kv: KVNamespaceLike,
+    private prefix = "task:",
+  ) {}
+  async save(task: TaskRecord): Promise<void> {
+    await this.kv.put(this.prefix + task.id, JSON.stringify(task));
+  }
+  async get(id: string): Promise<TaskRecord | null> {
+    const v = await this.kv.get(this.prefix + id, { type: "json" });
+    return (v as TaskRecord | null) ?? null;
+  }
+  async list(): Promise<TaskRecord[]> {
+    const { keys } = await this.kv.list({ prefix: this.prefix });
+    const out: TaskRecord[] = [];
+    for (const k of keys) {
+      const v = await this.kv.get(k.name, { type: "json" });
+      if (v) out.push(v as TaskRecord);
+    }
+    return out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   }
 }
 

@@ -4,3 +4,4 @@ data/
 *.log
 .wrangler/
 .dev.vars
+video/*.mp4

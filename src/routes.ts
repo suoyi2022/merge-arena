@@ -38,23 +38,35 @@ async function fanOut(
   const brief = await baseline.readFile({ ref: defaultBranch, path: "AGENTS.md" });
   await baseline[Symbol.asyncDispose]();
 
-  const workspaces: Workspace[] = [];
-  for (let i = 0; i < count; i++) {
+  // 并发 fork：3 个 agent 同时开工，而不是串行等待
+  const one = async (i: number): Promise<Workspace> => {
     const name = `arena-${taskId}-agent-${i}`;
+    const log = (m: string) => console.log(`[fanout:${name}] ${m}`);
+    log("get baseline start");
     const h = await store.get(baselineName);
-    const forked = await h.fork(name, { defaultBranchOnly: true });
-    await h[Symbol.asyncDispose]();
-    const wh = await store.get(forked.name);
-    const token = await wh.createToken("write", 3600);
-    await wh[Symbol.asyncDispose]();
-    workspaces.push({
-      name: forked.name,
-      remote: forked.remote,
-      token: token.plaintext,
-      instructions: brief,
-    });
-  }
-  return workspaces;
+    log("get baseline ok, fork start");
+    try {
+      const forked = await h.fork(name, { defaultBranchOnly: true });
+      log(`fork ok -> ${forked.name}, get fork start`);
+      const wh = await store.get(forked.name);
+      log("get fork ok, createToken start");
+      try {
+        const token = await wh.createToken("write", 3600);
+        log("createToken ok");
+        return {
+          name: forked.name,
+          remote: forked.remote,
+          token: token.plaintext,
+          instructions: brief,
+        };
+      } finally {
+        await wh[Symbol.asyncDispose]();
+      }
+    } finally {
+      await h[Symbol.asyncDispose]();
+    }
+  };
+  return Promise.all(Array.from({ length: count }, (_, i) => one(i)));
 }
 
 export async function routeRequest(req: Request, ctx: RouteContext): Promise<Response | null> {

@@ -9,19 +9,23 @@
   // Artifacts 绑定：namespace "merge-arena"（需 Workers Paid plan，Dashboard 或 API 预先创建）
   "artifacts": [{ "binding": "ARTIFACTS", "namespace": "merge-arena" }],
 
+  // KV 绑定：任务状态持久化（跨 isolate、跨部署不丢任务）
+  "kv_namespaces": [{ "binding": "TASKS", "id": "207c7efcf0134197876322d55c5827c6" }],
+
   // 路径 A（推荐）：Artifacts 事件直触发，无需 Queue。
   // 需要 wrangler >= 4.118；filter 键名以 `npx wrangler types` / 部署校验为准。
+  // 暂时注释：等 review Workflow 建好后再启用（需指定 workflow 目标）。
   // workflow 目标示例（按需启用）：
   //   "workflows": [{ "name": "review-workflow", "binding": "REVIEW_WORKFLOW", "class_name": "ReviewWorkflow" }],
-  "triggers": {
-    "events": [
-      {
-        "type": "cf.artifacts.repo.pushed",
-        "filter": { "namespace": "merge-arena", "repo_name": "arena-*" }
-        // "workflow": "review-workflow"
-      }
-    ]
-  }
+  // "triggers": {
+  //   "events": [
+  //     {
+  //       "type": "cf.artifacts.repo.pushed",
+  //       "filter": { "namespace": "merge-arena", "repo_name": "arena-*" }
+  //       // "workflow": "review-workflow"
+  //     }
+  //   ]
+  // }
 
   // 路径 B（兜底）：经典 Queue 消费事件。若 direct triggers 不可用，
   // 取消下面注释，用 queue 接收 cf.artifacts.repo.pushed，src/index.ts 的
