@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>合并擂台 Merge Arena</title>
+<style>
+  :root { --bg:#0f1115; --card:#171b22; --line:#2a3140; --txt:#e8ecf3; --dim:#9aa4b5;
+          --acc:#f6821f; --green:#3fb950; --red:#f85149; --blue:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:28px 24px 8px; max-width:1100px; margin:0 auto; }
+  header h1 { margin:0; font-size:28px; }
+  header h1 span { color:var(--acc); }
+  header p { color:var(--dim); margin:6px 0 0; }
+  main { max-width:1100px; margin:0 auto; padding:16px 24px 60px; display:flex; flex-direction:column; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card h2 { margin:0 0 12px; font-size:16px; }
+  textarea, input, select { width:100%; background:#0d1016; border:1px solid var(--line); color:var(--txt);
+    border-radius:8px; padding:10px 12px; font-size:14px; }
+  textarea { min-height:70px; resize:vertical; }
+  .row { display:flex; gap:12px; margin-top:12px; }
+  .row > * { flex:1; }
+  button { cursor:pointer; border:none; border-radius:8px; padding:11px 22px; font-size:15px; font-weight:600; }
+  .primary { background:var(--acc); color:#111; }
+  .ghost { background:#232a36; color:var(--txt); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #lanes { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .lane { border:1px solid var(--line); border-radius:10px; padding:14px; background:#12161d; }
+  .lane .name { font-weight:700; font-size:14px; margin-bottom:8px; }
+  .badge { display:inline-block; font-size:12px; padding:3px 10px; border-radius:20px; }
+  .b-working { background:#1f3a5f; color:var(--blue); }
+  .b-pushed { background:#3a2f12; color:#e3b341; }
+  .b-scored { background:#123a22; color:var(--green); }
+  .b-error { background:#3a1a1a; color:var(--red); }
+  .score { font-size:22px; font-weight:800; margin-top:8px; }
+  .files { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+  .files button { padding:6px 12px; font-size:13px; }
+  .files button.on { background:var(--acc); color:#111; }
+  .diffwrap { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .diffpane { max-height:420px; overflow:auto; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; line-height:1.55; }
+  .diffpane h3 { position:sticky; top:0; margin:0; padding:8px 12px; background:#1c222d; font-size:12px; color:var(--dim); }
+  .dl { white-space:pre-wrap; word-break:break-all; padding:0 12px; }
+  .dl.add { background:rgba(63,185,80,.13); }
+  .dl.del { background:rgba(248,81,73,.13); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  tr.winner td { color:var(--acc); font-weight:700; }
+  .muted { color:var(--dim); font-size:13px; }
+  #msg { min-height:20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>合并擂台 <span>Merge Arena</span></h1>
+  <p>同一个需求，多个 agent 并发实现，并排评审，一键合并冠军。</p>
+</header>
+<main>
+  <section class="card">
+    <h2>🏁 新开擂台</h2>
+    <textarea id="task" placeholder="描述需求，例如：给 README 加一段项目介绍，并补一个冒烟测试"></textarea>
+    <div class="row">
+      <input id="repo" value="newsnow-baseline" placeholder="基线仓库">
+      <select id="count"><option value="2">2 个 agent</option><option value="3" selected>3 个 agent</option><option value="4">4 个 agent</option></select>
+      <button class="primary" id="start">开赛</button>
+    </div>
+    <p class="muted" id="msg"></p>
+  </section>
+
+  <section class="card" id="liveCard" hidden>
+    <h2>⚔️ 擂台实况</h2>
+    <div id="lanes"></div>
+  </section>
+
+  <section class="card" id="diffCard" hidden>
+    <h2>🔍 代码对比</h2>
+    <div class="files" id="agentTabs"></div>
+    <div class="files" id="fileTabs"></div>
+    <div class="diffwrap">
+      <div class="diffpane"><h3>基线 main</h3><div id="paneBase"></div></div>
+      <div class="diffpane"><h3>该 agent</h3><div id="paneHead"></div></div>
+    </div>
+  </section>
+
+  <section class="card" id="boardCard" hidden>
+    <h2>🏆 排行榜</h2>
+    <table><thead><tr><th>#</th><th>Agent</th><th>总分</th><th>改动行数</th><th>有测试</th><th>无 TODO</th></tr></thead>
+    <tbody id="board"></tbody></table>
+    <div class="row"><button class="primary" id="mergeBtn" disabled>合并冠军</button></div>
+    <p class="muted" id="mergeMsg"></p>
+  </section>
+</main>
+
+<script>
+// 最小 LCS 行级对齐，用于并排高亮
+function align(a, b) {
+  const n = a.length, m = b.length;
+  const dp = Array.from({length: n+1}, () => new Uint16Array(m+1));
+  for (let i = n-1; i >= 0; i--) for (let j = m-1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({t:'same', a:a[i], b:b[j]}); i++; j++; }
+    else if (dp[i+1][j] >= dp[i][j+1]) { out.push({t:'del', a:a[i]}); i++; }
+    else { out.push({t:'add', b:b[j]}); j++; }
+  }
+  while (i < n) out.push({t:'del', a:a[i++]});
+  while (j < m) out.push({t:'add', b:b[j++]});
+  return out;
+}
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+let taskId = null, pollTimer = null, curAgent = 0, curFile = 0, diffCache = {};
+
+const statusName = { working:'编码中', pushed:'已推送', scored:'已评分', error:'出错', failed:'失败' };
+const statusCls = { working:'b-working', pushed:'b-pushed', scored:'b-scored', error:'b-error', failed:'b-error' };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+document.getElementById('start').onclick = async () => {
+  const msg = document.getElementById('msg');
+  try {
+    msg.textContent = '正在 fork 工作区…';
+    const d = await api('/api/arena', { method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ task: document.getElementById('task').value,
+        repo: document.getElementById('repo').value, agents: +document.getElementById('count').value }) });
+    taskId = d.id; curAgent = 0; curFile = 0; diffCache = {};
+    msg.textContent = '擂台 ' + taskId + ' 已开赛，agent 并发编码中…';
+    for (const c of ['liveCard','diffCard','boardCard']) document.getElementById(c).hidden = false;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(refresh, 2000);
+    await refresh();
+  } catch (e) { msg.textContent = '开赛失败：' + e.message; }
+};
+
+async function refresh() {
+  if (!taskId) return;
+  const t = await api('/api/arena/' + taskId);
+  const lanes = document.getElementById('lanes');
+  lanes.innerHTML = t.agents.map((a, i) =>
+    `<div class="lane"><div class="name">agent-${i} <span class="muted">${esc(a.persona||'')}</span></div>
+     <span class="badge ${statusCls[a.status]}">${statusName[a.status]||a.status}</span>
+     ${a.score ? `<div class="score">${a.score.total} 分</div>` : ''}
+     ${a.error ? `<div class="muted">${esc(a.error)}</div>` : ''}</div>`).join('');
+
+  // agent tabs
+  document.getElementById('agentTabs').innerHTML = t.agents.map((a, i) =>
+    `<button class="${i===curAgent?'on':''}" data-a="${i}">agent-${i}</button>`).join('');
+  document.querySelectorAll('#agentTabs button').forEach(b =>
+    b.onclick = () => { curAgent = +b.dataset.a; curFile = 0; renderDiff(); });
+
+  await renderDiff();
+
+  // leaderboard
+  const lb = t.leaderboard || [];
+  document.getElementById('board').innerHTML = lb.map((r, k) =>
+    `<tr class="${k===0?'winner':''}"><td>${k+1}</td><td>agent-${r.index}</td><td>${r.score.total}</td>
+     <td>${r.score.linesChanged}</td><td>${r.score.hasTests?'✅':'—'}</td><td>${r.score.noTodo?'✅':'—'}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">等待评分…</td></tr>';
+  const allScored = t.agents.length && t.agents.every(a => a.status === 'scored');
+  document.getElementById('mergeBtn').disabled = !allScored || t.winner !== undefined;
+  if (t.winner !== undefined)
+    document.getElementById('mergeMsg').textContent = `已合并冠军 agent-${t.winner}（${t.mergedCommit||''}）`;
+}
+
+async function renderDiff() {
+  if (!taskId) return;
+  const key = taskId + ':' + curAgent;
+  if (!diffCache[key]) diffCache[key] = await api(`/api/arena/${taskId}/diff?agent=${curAgent}`);
+  const files = diffCache[key].files || [];
+  document.getElementById('fileTabs').innerHTML = files.map((f, i) =>
+    `<button class="${i===curFile?'on':''}" data-f="${i}">${esc(f.path)}</button>`).join('')
+    || '<span class="muted">暂无改动</span>';
+  document.querySelectorAll('#fileTabs button').forEach(b =>
+    b.onclick = () => { curFile = +b.dataset.f; renderDiff(); });
+  const f = files[curFile];
+  if (!f) { document.getElementById('paneBase').innerHTML = ''; document.getElementById('paneHead').innerHTML = ''; return; }
+  const rows = align((f.base||'').split('\n'), (f.head||'').split('\n'));
+  let hb = '', hh = '';
+  for (const r of rows) {
+    if (r.t === 'same') { hb += `<div class="dl">${esc(r.a)}</div>`; hh += `<div class="dl">${esc(r.b)}</div>`; }
+    else if (r.t === 'del') { hb += `<div class="dl del">${esc(r.a)}</div>`; hh += `<div class="dl">&nbsp;</div>`; }
+    else { hb += `<div class="dl">&nbsp;</div>`; hh += `<div class="dl add">${esc(r.b)}</div>`; }
+  }
+  document.getElementById('paneBase').innerHTML = hb;
+  document.getElementById('paneHead').innerHTML = hh;
+}
+
+document.getElementById('mergeBtn').onclick = async () => {
+  const mm = document.getElementById('mergeMsg');
+  try {
+    const t = await api('/api/arena/' + taskId);
+    const winner = (t.leaderboard||[])[0];
+    if (!winner) throw new Error('还没有评分结果');
+    if (!confirm(`把冠军 agent-${winner.index} 合并进基线 main？`)) return;
+    const d = await api(`/api/arena/${taskId}/merge`, { method:'POST',
+      headers:{'content-type':'application/json'}, body: JSON.stringify({ winner: winner.index }) });
+    mm.textContent = `合并成功：${d.winner} → ${d.commit}`;
+    await refresh();
+  } catch (e) { mm.textContent = '合并失败：' + e.message; }
+};
+</script>
+</body>
+</html>

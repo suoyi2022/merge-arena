@@ -1,0 +1,1 @@
+{"agent":{"args":["--prompt","$ARENA_TASK","--cwd","$ARENA_WORKSPACE_DIR"],"command":"my-agent-cli","keepWorkspace":false,"kind":"scripted","logDir":"data/logs","timeoutMs":1200000}}

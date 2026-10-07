@@ -1,0 +1,1 @@
+{"compilerOptions":{"allowImportingTsExtensions":true,"esModuleInterop":true,"lib":["ES2022","ESNext.Disposable","DOM"],"module":"ESNext","moduleResolution":"Bundler","noEmit":true,"resolveJsonModule":true,"skipLibCheck":true,"strict":true,"target":"ES2022","types":["node"]},"include":["src/**/*"]}
