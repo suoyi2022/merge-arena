@@ -1,0 +1,12 @@
+{
+  "name": "Merge Arena",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm ci",
+  "forwardPorts": [8787],
+  "portsAttributes": {
+    "8787": {
+      "label": "Merge Arena",
+      "onAutoForward": "notify"
+    }
+  }
+}
